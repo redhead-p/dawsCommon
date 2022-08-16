@@ -50,9 +50,8 @@ byte Reporter::_lastId;                  // last ID allocated
  
  @note the rtos queue holds a list of pointers.  Here the pointers refer to reports.
  */
-rtos::Queue<report_t, 16> Reporter::_reportQueue;
+rtos::Mail<report_t, 16> Reporter::_reportQueue;
 
-volatile uint16_t Reporter::_overRunCount = 0;      ///< count of overrun incidents
 volatile uint16_t Reporter::_queueFullCount = 0;    ///< count of report queue full incidents
 
 
@@ -85,8 +84,6 @@ Reporter::Reporter(ReporterType type)
     }
     _lastInstantiated = this;   // update static class variable so this is now the last
     _nextReporter = nullptr;       // and ensure that the next reporter in chain is null
-    _lastRep.timeStampIn = 0;  // set time stamps to mark event processed
-    _lastRep.timeStampOut = 0;
 }
 
 /**
@@ -218,29 +215,18 @@ byte Reporter::getId()
  */
 void Reporter::queueReport(EventType repType, int info)
 {
-    bool overRun = (_lastRep.timeStampIn > 0); // last report unacknowledged
     
-    report_t* rp;
-    if (overRun)
+    report_t* rp = _reportQueue.try_alloc();
+    if (rp != nullptr)
     {
-        
-        rp = &_overRunRep;
-        
-        rp->repType = REPORT_OVERRUN;
-        _overRunRep.info = repType;     // save actual report type as info
-        _overRunCount++;
-        
-    }
-    else
-    {
-        rp = &_lastRep;
+        // alloc worked
         rp->repType = repType;
         rp->info = info;
+        rp->source = this;
+        rp->timeStampIn = micros();
+        _reportQueue.put(rp);  // use of error return deprecated - will always succeed if alloc worked.
     }
-    rp->source = this;
-    rp->timeStampIn = micros();
-    rp->timeStampOut = 0;
-    if(!_reportQueue.try_put(rp))
+    else
     {
         // queue full
         _queueFullCount++;
@@ -267,8 +253,7 @@ bool Reporter::tryGetReport(report_t* rdp)
  
  This attempts to retrieve a report from the queue.  It returns false if wait time is exceeded.
  If there is a report, its content is copied to the requestor and
- true is returned.  The time stamp as set by the originator in the originator's report is set to 0 to mark that
- responsiblity for processing the report is taken.
+ true is returned.
  @param rdp - pointer to where the report is to be copied.
  @param waitTime - time to wait specified as an rtos clock duration.
  
@@ -278,8 +263,8 @@ bool Reporter::tryGetReport(report_t* rdp)
 
 bool Reporter::tryGetReport(report_t* rdp, rtos::Kernel::Clock::duration_u32 waitTime)
 {
-    report_t* rsp;  // we will put the source pointer here
-    if (_reportQueue.try_get_for(waitTime, &rsp))
+    report_t* rsp = _reportQueue.try_get_for(waitTime);  // see if any thing there
+    if (rsp != nullptr) // is there any thing there?
     {
         // there's something there
         // copy data fields to target
@@ -288,8 +273,7 @@ bool Reporter::tryGetReport(report_t* rdp, rtos::Kernel::Clock::duration_u32 wai
         rdp->info = rsp->info;
         rdp->timeStampIn = rsp->timeStampIn;  // including time stamp
         rdp->timeStampOut = micros();         // set time now for recipient
-        rsp->timeStampOut = rdp->timeStampOut; // and source
-        rsp->timeStampIn = 0;                   // but clear originating time to free
+        _reportQueue.free(rsp);  // error not checked
         return(true);
     }
     else

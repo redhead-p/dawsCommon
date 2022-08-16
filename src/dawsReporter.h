@@ -133,7 +133,7 @@ typedef struct
  This is a virtual class.
  
  When a device manager or similar detects a significant event this event is reported.  Event reports are inserted by reference into an rtos queue.
- Many devices may detect and report events.
+ Many devices may detect and report events.  The report queue has a fixed capaccity.  
  
  There is a single reader for events which processes them in sequence.
  
@@ -171,18 +171,17 @@ public:
     *********************************/
     virtual ReporterType getType() = 0;
     void queueReport(EventType, int);
-    uint16_t getOverRunCount(); ///< not implemented yet
     uint16_t getQueueFullCount(); ///< not implemented yet
     static bool tryGetReport(report_t*);
     static bool tryGetReport(report_t*, rtos::Kernel::Clock::duration_u32 );
 
     
 private:
-    static rtos::Queue<report_t, 16> _reportQueue;  // report queue
-    static volatile uint16_t _overRunCount;      // count of overrun incidents
+    static rtos::Mail<report_t, 16> _reportQueue;  // report queue
+
     static volatile uint16_t _queueFullCount;    // count of report queue full incidents
-    report_t _lastRep;
-    report_t _overRunRep;
+
+
     Reporter* _nextReporter;    ///< pointer to next reporter in chain
     byte _id;       ///< unique id
     static byte _lastId;  ///< last allocated id
